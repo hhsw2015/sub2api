@@ -94,7 +94,7 @@ func SetupRouter(
 	}
 
 	// 注册路由
-	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
+	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient, embedded)
 
 	return r
 }
@@ -112,9 +112,12 @@ func registerRoutes(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	embedded bool,
 ) {
-	// 通用路由（健康检查、状态等）
-	routes.RegisterCommonRoutes(r)
+	// 通用路由（健康检查、状态等）-- skip in embedded mode (host server provides these)
+	if !embedded {
+		routes.RegisterCommonRoutes(r)
+	}
 
 	// API v1
 	v1 := r.Group("/api/v1")
