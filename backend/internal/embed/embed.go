@@ -28,6 +28,7 @@ type Result struct {
 	BillingCacheService *service.BillingCacheService
 	APIKeyService       *service.APIKeyService
 	SubscriptionService *service.SubscriptionService
+	APIKeyAuthMiddleware gin.HandlerFunc
 	Cleanup             func()
 }
 
@@ -491,10 +492,11 @@ func Init(engine *gin.Engine, configDir string) (*Result, error) {
 	}
 
 	return &Result{
-		BillingService:      billingService,
-		BillingCacheService: billingCacheService,
-		APIKeyService:       apiKeyService,
-		SubscriptionService: subscriptionService,
-		Cleanup:             cleanup,
+		BillingService:       billingService,
+		BillingCacheService:  billingCacheService,
+		APIKeyService:        apiKeyService,
+		SubscriptionService:  subscriptionService,
+		APIKeyAuthMiddleware: gin.HandlerFunc(apiKeyAuthMiddleware),
+		Cleanup:              cleanup,
 	}, nil
 }
