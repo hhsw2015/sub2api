@@ -71,23 +71,21 @@ func SetupRouter(
 			}
 			return nil
 		}))
+	}
 
-		// Serve embedded frontend with settings injection if available
-		if web.HasEmbeddedFrontend() {
-			frontendServer, err := web.NewFrontendServer(settingService)
-			if err != nil {
-				log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
-				r.Use(web.ServeEmbeddedFrontend())
-				settingService.SetOnUpdateCallback(refreshFrameOrigins)
-			} else {
-				settingService.SetOnUpdateCallback(func() {
-					frontendServer.InvalidateCache()
-					refreshFrameOrigins()
-				})
-				r.Use(frontendServer.Middleware())
-			}
-		} else {
+	// Serve embedded frontend (always, even in embedded mode -- sub2api admin/user UI)
+	if web.HasEmbeddedFrontend() {
+		frontendServer, err := web.NewFrontendServer(settingService)
+		if err != nil {
+			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
+			r.Use(web.ServeEmbeddedFrontend())
 			settingService.SetOnUpdateCallback(refreshFrameOrigins)
+		} else {
+			settingService.SetOnUpdateCallback(func() {
+				frontendServer.InvalidateCache()
+				refreshFrameOrigins()
+			})
+			r.Use(frontendServer.Middleware())
 		}
 	} else {
 		settingService.SetOnUpdateCallback(refreshFrameOrigins)
