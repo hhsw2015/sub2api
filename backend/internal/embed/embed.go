@@ -22,10 +22,20 @@ import (
 	_ "github.com/Wei-Shaw/sub2api/ent/runtime"
 )
 
+// Result holds references to key services for external integration.
+type Result struct {
+	BillingService      *service.BillingService
+	BillingCacheService *service.BillingCacheService
+	APIKeyService       *service.APIKeyService
+	SubscriptionService *service.SubscriptionService
+	Cleanup             func()
+}
+
 // Init initializes the sub2api commercial layer on the given gin engine.
 // configDir is the directory containing sub2api's config.yaml.
-// Returns a cleanup function that stops all background services.
-func Init(engine *gin.Engine, configDir string) (cleanup func(), err error) {
+func Init(engine *gin.Engine, configDir string) (*Result, error) {
+	var cleanup func()
+	var err error
 	// Point config loader at the provided directory.
 	if err = os.Setenv("DATA_DIR", configDir); err != nil {
 		return nil, err
@@ -480,5 +490,11 @@ func Init(engine *gin.Engine, configDir string) (cleanup func(), err error) {
 		}
 	}
 
-	return cleanup, nil
+	return &Result{
+		BillingService:      billingService,
+		BillingCacheService: billingCacheService,
+		APIKeyService:       apiKeyService,
+		SubscriptionService: subscriptionService,
+		Cleanup:             cleanup,
+	}, nil
 }
