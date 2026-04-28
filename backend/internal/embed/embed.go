@@ -32,20 +32,33 @@ type Result struct {
 	Cleanup             func()
 }
 
+// InitFromMap initializes the sub2api commercial layer from a config map.
+// This avoids Viper global state and allows embedding config in a parent YAML.
+func InitFromMap(engine *gin.Engine, data map[string]any) (*Result, error) {
+	configConfig, err := config.LoadFromMap(data)
+	if err != nil {
+		return nil, err
+	}
+	return initWithConfig(engine, configConfig)
+}
+
 // Init initializes the sub2api commercial layer on the given gin engine.
 // configDir is the directory containing sub2api's config.yaml.
 func Init(engine *gin.Engine, configDir string) (*Result, error) {
-	var cleanup func()
-	var err error
-	// Point config loader at the provided directory.
-	if err = os.Setenv("DATA_DIR", configDir); err != nil {
+	if err := os.Setenv("DATA_DIR", configDir); err != nil {
 		return nil, err
 	}
-
 	configConfig, err := config.ProvideConfig()
 	if err != nil {
 		return nil, err
 	}
+	return initWithConfig(engine, configConfig)
+}
+
+func initWithConfig(engine *gin.Engine, configConfig *config.Config) (*Result, error) {
+	var cleanup func()
+	var err error
+	_ = err
 
 	// --- Infrastructure ---
 

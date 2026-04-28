@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
 
@@ -1234,6 +1235,50 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		return nil, fmt.Errorf("unmarshal config error: %w", err)
 	}
 
+	if err := normalizeConfig(&cfg); err != nil {
+		return nil, err
+	}
+	// Viper-dependent explicit flags (not available in LoadFromMap path).
+	cfg.OIDC.UsePKCEExplicit = hasExplicitConfigOrEnv("oidc_connect.use_pkce", "OIDC_CONNECT_USE_PKCE")
+	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
+
+	originalJWTSecret := cfg.JWT.Secret
+	if allowMissingJWTSecret && originalJWTSecret == "" {
+		// 启动阶段允许先无 JWT 密钥，后续在数据库初始化后补齐。
+		cfg.JWT.Secret = strings.Repeat("0", 32)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config error: %w", err)
+	}
+
+	if allowMissingJWTSecret && originalJWTSecret == "" {
+		cfg.JWT.Secret = ""
+	}
+
+	if !cfg.Security.URLAllowlist.Enabled {
+		slog.Warn("security.url_allowlist.enabled=false; allowlist/SSRF checks disabled (minimal format validation only).")
+	}
+	if !cfg.Security.ResponseHeaders.Enabled {
+		slog.Warn("security.response_headers.enabled=false; configurable header filtering disabled (default allowlist only).")
+	}
+
+	if cfg.JWT.Secret != "" && isWeakJWTSecret(cfg.JWT.Secret) {
+		slog.Warn("JWT secret appears weak; use a 32+ character random secret in production.")
+	}
+	if len(cfg.Security.ResponseHeaders.AdditionalAllowed) > 0 || len(cfg.Security.ResponseHeaders.ForceRemove) > 0 {
+		slog.Info("response header policy configured",
+			"additional_allowed", cfg.Security.ResponseHeaders.AdditionalAllowed,
+			"force_remove", cfg.Security.ResponseHeaders.ForceRemove,
+		)
+	}
+
+	return &cfg, nil
+}
+
+// normalizeConfig applies string trimming, case normalization, and derived field
+// computation to a freshly-decoded Config. It is used by both load() and LoadFromMap().
+func normalizeConfig(cfg *Config) error {
 	cfg.RunMode = NormalizeRunMode(cfg.RunMode)
 	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	if cfg.Server.Mode == "" {
@@ -1272,8 +1317,6 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.OIDC.UserInfoEmailPath = strings.TrimSpace(cfg.OIDC.UserInfoEmailPath)
 	cfg.OIDC.UserInfoIDPath = strings.TrimSpace(cfg.OIDC.UserInfoIDPath)
 	cfg.OIDC.UserInfoUsernamePath = strings.TrimSpace(cfg.OIDC.UserInfoUsernamePath)
-	cfg.OIDC.UsePKCEExplicit = hasExplicitConfigOrEnv("oidc_connect.use_pkce", "OIDC_CONNECT_USE_PKCE")
-	cfg.OIDC.ValidateIDTokenExplicit = hasExplicitConfigOrEnv("oidc_connect.validate_id_token", "OIDC_CONNECT_VALIDATE_ID_TOKEN")
 	cfg.Dashboard.KeyPrefix = strings.TrimSpace(cfg.Dashboard.KeyPrefix)
 	cfg.CORS.AllowedOrigins = normalizeStringSlice(cfg.CORS.AllowedOrigins)
 	cfg.Security.ResponseHeaders.AdditionalAllowed = normalizeStringSlice(cfg.Security.ResponseHeaders.AdditionalAllowed)
@@ -1289,7 +1332,7 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	if cfg.Gateway.ForcedCodexInstructionsTemplateFile != "" {
 		content, err := os.ReadFile(cfg.Gateway.ForcedCodexInstructionsTemplateFile)
 		if err != nil {
-			return nil, fmt.Errorf("read forced codex instructions template %q: %w", cfg.Gateway.ForcedCodexInstructionsTemplateFile, err)
+			return fmt.Errorf("read forced codex instructions template %q: %w", cfg.Gateway.ForcedCodexInstructionsTemplateFile, err)
 		}
 		cfg.Gateway.ForcedCodexInstructionsTemplate = string(content)
 	}
@@ -1311,9 +1354,9 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	// Auto-generate TOTP encryption key if not set (32 bytes = 64 hex chars for AES-256)
 	cfg.Totp.EncryptionKey = strings.TrimSpace(cfg.Totp.EncryptionKey)
 	if cfg.Totp.EncryptionKey == "" {
-		key, err := generateJWTSecret(32) // Reuse the same random generation function
+		key, err := generateJWTSecret(32)
 		if err != nil {
-			return nil, fmt.Errorf("generate totp encryption key error: %w", err)
+			return fmt.Errorf("generate totp encryption key error: %w", err)
 		}
 		cfg.Totp.EncryptionKey = key
 		cfg.Totp.EncryptionKeyConfigured = false
@@ -1322,37 +1365,122 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 		cfg.Totp.EncryptionKeyConfigured = true
 	}
 
-	originalJWTSecret := cfg.JWT.Secret
-	if allowMissingJWTSecret && originalJWTSecret == "" {
-		// 启动阶段允许先无 JWT 密钥，后续在数据库初始化后补齐。
-		cfg.JWT.Secret = strings.Repeat("0", 32)
+	return nil
+}
+
+// applyStructDefaults sets default values directly on the Config struct for fields
+// that would otherwise be zero-valued when decoded via mapstructure (bypassing Viper).
+// Only fields that affect normalizeConfig or Validate are included here.
+func applyStructDefaults(cfg *Config) {
+	if cfg.RunMode == "" {
+		cfg.RunMode = RunModeStandard
+	}
+	if cfg.Server.Mode == "" {
+		cfg.Server.Mode = "release"
+	}
+	if cfg.Server.Host == "" {
+		cfg.Server.Host = "0.0.0.0"
+	}
+	if cfg.Server.Port == 0 {
+		cfg.Server.Port = 8080
+	}
+	if cfg.Log.Level == "" {
+		cfg.Log.Level = "info"
+	}
+	if cfg.Log.Format == "" {
+		cfg.Log.Format = "console"
+	}
+	if cfg.Log.ServiceName == "" {
+		cfg.Log.ServiceName = "sub2api"
+	}
+	if cfg.Log.Environment == "" {
+		cfg.Log.Environment = "production"
+	}
+	if cfg.Log.StacktraceLevel == "" {
+		cfg.Log.StacktraceLevel = "error"
+	}
+	if cfg.Database.Host == "" {
+		cfg.Database.Host = "localhost"
+	}
+	if cfg.Database.Port == 0 {
+		cfg.Database.Port = 5432
+	}
+	if cfg.Database.User == "" {
+		cfg.Database.User = "postgres"
+	}
+	if cfg.Database.Password == "" {
+		cfg.Database.Password = "postgres"
+	}
+	if cfg.Database.DBName == "" {
+		cfg.Database.DBName = "sub2api"
+	}
+	if cfg.Database.SSLMode == "" {
+		cfg.Database.SSLMode = "prefer"
+	}
+	if cfg.Database.MaxOpenConns == 0 {
+		cfg.Database.MaxOpenConns = 256
+	}
+	if cfg.Database.MaxIdleConns == 0 {
+		cfg.Database.MaxIdleConns = 128
+	}
+	if cfg.Database.ConnMaxLifetimeMinutes == 0 {
+		cfg.Database.ConnMaxLifetimeMinutes = 30
+	}
+	if cfg.Database.ConnMaxIdleTimeMinutes == 0 {
+		cfg.Database.ConnMaxIdleTimeMinutes = 5
+	}
+	if cfg.Redis.Host == "" {
+		cfg.Redis.Host = "localhost"
+	}
+	if cfg.Redis.Port == 0 {
+		cfg.Redis.Port = 6379
+	}
+	if cfg.JWT.ExpireHour == 0 {
+		cfg.JWT.ExpireHour = 24
+	}
+	if cfg.JWT.RefreshTokenExpireDays == 0 {
+		cfg.JWT.RefreshTokenExpireDays = 30
+	}
+	if cfg.JWT.RefreshWindowMinutes == 0 {
+		cfg.JWT.RefreshWindowMinutes = 2
+	}
+	if cfg.Default.UserConcurrency == 0 {
+		cfg.Default.UserConcurrency = 5
+	}
+	if cfg.Default.APIKeyPrefix == "" {
+		cfg.Default.APIKeyPrefix = "sk-"
+	}
+	if cfg.Default.RateMultiplier == 0 {
+		cfg.Default.RateMultiplier = 1.0
+	}
+}
+
+// LoadFromMap constructs a Config from a map (e.g., from a parent YAML config).
+// This allows embedding sub2api config inside another application's config
+// without using Viper's global state.
+func LoadFromMap(data map[string]any) (*Config, error) {
+	var cfg Config
+	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
+		Result:           &cfg,
+		TagName:          "mapstructure",
+		WeaklyTypedInput: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create decoder: %w", err)
+	}
+	if err := decoder.Decode(data); err != nil {
+		return nil, fmt.Errorf("decode config from map: %w", err)
+	}
+
+	applyStructDefaults(&cfg)
+
+	if err := normalizeConfig(&cfg); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("validate config error: %w", err)
+		return nil, err
 	}
-
-	if allowMissingJWTSecret && originalJWTSecret == "" {
-		cfg.JWT.Secret = ""
-	}
-
-	if !cfg.Security.URLAllowlist.Enabled {
-		slog.Warn("security.url_allowlist.enabled=false; allowlist/SSRF checks disabled (minimal format validation only).")
-	}
-	if !cfg.Security.ResponseHeaders.Enabled {
-		slog.Warn("security.response_headers.enabled=false; configurable header filtering disabled (default allowlist only).")
-	}
-
-	if cfg.JWT.Secret != "" && isWeakJWTSecret(cfg.JWT.Secret) {
-		slog.Warn("JWT secret appears weak; use a 32+ character random secret in production.")
-	}
-	if len(cfg.Security.ResponseHeaders.AdditionalAllowed) > 0 || len(cfg.Security.ResponseHeaders.ForceRemove) > 0 {
-		slog.Info("response header policy configured",
-			"additional_allowed", cfg.Security.ResponseHeaders.AdditionalAllowed,
-			"force_remove", cfg.Security.ResponseHeaders.ForceRemove,
-		)
-	}
-
 	return &cfg, nil
 }
 
