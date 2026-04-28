@@ -20,6 +20,14 @@ import (
 const frameSrcRefreshTimeout = 5 * time.Second
 
 // SetupRouter 配置路由器中间件和路由
+// SetupRouterOptions controls optional behavior for route setup.
+type SetupRouterOptions struct {
+	// Embedded skips global middleware (Recovery, Logger, CORS, SecurityHeaders,
+	// Frontend SPA) when sub2api is embedded inside another server (e.g. CPA)
+	// that already provides these.
+	Embedded bool
+}
+
 func SetupRouter(
 	r *gin.Engine,
 	handlers *handler.Handlers,
@@ -32,7 +40,9 @@ func SetupRouter(
 	settingService *service.SettingService,
 	cfg *config.Config,
 	redisClient *redis.Client,
+	opts ...SetupRouterOptions,
 ) *gin.Engine {
+	embedded := len(opts) > 0 && opts[0].Embedded
 	// 缓存 iframe 页面的 origin 列表，用于动态注入 CSP frame-src
 	var cachedFrameOrigins atomic.Pointer[[]string]
 	emptyOrigins := []string{}
@@ -50,31 +60,34 @@ func SetupRouter(
 	}
 	refreshFrameOrigins() // 启动时初始化
 
-	// 应用中间件
-	r.Use(middleware2.RequestLogger())
-	r.Use(middleware2.Logger())
-	r.Use(middleware2.CORS(cfg.CORS))
-	r.Use(middleware2.SecurityHeaders(cfg.Security.CSP, func() []string {
-		if p := cachedFrameOrigins.Load(); p != nil {
-			return *p
-		}
-		return nil
-	}))
+	if !embedded {
+		// 应用中间件 (skipped in embedded mode -- host server provides these)
+		r.Use(middleware2.RequestLogger())
+		r.Use(middleware2.Logger())
+		r.Use(middleware2.CORS(cfg.CORS))
+		r.Use(middleware2.SecurityHeaders(cfg.Security.CSP, func() []string {
+			if p := cachedFrameOrigins.Load(); p != nil {
+				return *p
+			}
+			return nil
+		}))
 
-	// Serve embedded frontend with settings injection if available
-	if web.HasEmbeddedFrontend() {
-		frontendServer, err := web.NewFrontendServer(settingService)
-		if err != nil {
-			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
-			r.Use(web.ServeEmbeddedFrontend())
-			settingService.SetOnUpdateCallback(refreshFrameOrigins)
+		// Serve embedded frontend with settings injection if available
+		if web.HasEmbeddedFrontend() {
+			frontendServer, err := web.NewFrontendServer(settingService)
+			if err != nil {
+				log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
+				r.Use(web.ServeEmbeddedFrontend())
+				settingService.SetOnUpdateCallback(refreshFrameOrigins)
+			} else {
+				settingService.SetOnUpdateCallback(func() {
+					frontendServer.InvalidateCache()
+					refreshFrameOrigins()
+				})
+				r.Use(frontendServer.Middleware())
+			}
 		} else {
-			// Register combined callback: invalidate HTML cache + refresh frame origins
-			settingService.SetOnUpdateCallback(func() {
-				frontendServer.InvalidateCache()
-				refreshFrameOrigins()
-			})
-			r.Use(frontendServer.Middleware())
+			settingService.SetOnUpdateCallback(refreshFrameOrigins)
 		}
 	} else {
 		settingService.SetOnUpdateCallback(refreshFrameOrigins)

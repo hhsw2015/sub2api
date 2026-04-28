@@ -283,7 +283,7 @@ func Init(engine *gin.Engine, configDir string) (*Result, error) {
 
 	// --- Mount routes on the provided engine ---
 
-	server.SetupRouter(engine, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, configConfig, redisClient)
+	server.SetupRouter(engine, handlers, jwtAuthMiddleware, adminAuthMiddleware, apiKeyAuthMiddleware, apiKeyService, subscriptionService, opsService, settingService, configConfig, redisClient, server.SetupRouterOptions{Embedded: true})
 
 	// --- Background services ---
 
