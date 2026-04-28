@@ -56,50 +56,6 @@ func NewUserMessageQueueService(cache UserMsgQueueCache, rpmCache RPMCache, cfg 
 	}
 }
 
-// IsRealUserMessage 检测是否为真实用户消息（非 tool_result）
-// 与 claude-relay-service 的检测逻辑一致：
-// 1. messages 非空
-// 2. 最后一条消息 role == "user"
-// 3. 最后一条消息 content（如果是数组）中不含 type:"tool_result" / "tool_use_result"
-func IsRealUserMessage(parsed *ParsedRequest) bool {
-	if parsed == nil || len(parsed.Messages) == 0 {
-		return false
-	}
-
-	lastMsg := parsed.Messages[len(parsed.Messages)-1]
-	msgMap, ok := lastMsg.(map[string]any)
-	if !ok {
-		return false
-	}
-
-	role, _ := msgMap["role"].(string)
-	if role != "user" {
-		return false
-	}
-
-	// 检查 content 是否包含 tool_result 类型
-	content, ok := msgMap["content"]
-	if !ok {
-		return true // 没有 content 字段，视为普通用户消息
-	}
-
-	contentArr, ok := content.([]any)
-	if !ok {
-		return true // content 不是数组（可能是 string），视为普通用户消息
-	}
-
-	for _, item := range contentArr {
-		itemMap, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		itemType, _ := itemMap["type"].(string)
-		if itemType == "tool_result" || itemType == "tool_use_result" {
-			return false
-		}
-	}
-	return true
-}
 
 // TryAcquire 尝试立即获取串行锁
 func (s *UserMessageQueueService) TryAcquire(ctx context.Context, accountID int64) (*QueueLockResult, error) {

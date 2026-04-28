@@ -48,12 +48,8 @@ type OpsService struct {
 	// getAccountAvailability is a unit-test hook for overriding account availability lookup.
 	getAccountAvailability func(ctx context.Context, platformFilter string, groupIDFilter *int64) (*OpsAccountAvailability, error)
 
-	concurrencyService        *ConcurrencyService
-	gatewayService            *GatewayService
-	openAIGatewayService      *OpenAIGatewayService
-	geminiCompatService       *GeminiMessagesCompatService
-	antigravityGatewayService *AntigravityGatewayService
-	systemLogSink             *OpsSystemLogSink
+	concurrencyService *ConcurrencyService
+	systemLogSink      *OpsSystemLogSink
 }
 
 func NewOpsService(
@@ -63,10 +59,6 @@ func NewOpsService(
 	accountRepo AccountRepository,
 	userRepo UserRepository,
 	concurrencyService *ConcurrencyService,
-	gatewayService *GatewayService,
-	openAIGatewayService *OpenAIGatewayService,
-	geminiCompatService *GeminiMessagesCompatService,
-	antigravityGatewayService *AntigravityGatewayService,
 	systemLogSink *OpsSystemLogSink,
 ) *OpsService {
 	svc := &OpsService{
@@ -77,12 +69,8 @@ func NewOpsService(
 		accountRepo: accountRepo,
 		userRepo:    userRepo,
 
-		concurrencyService:        concurrencyService,
-		gatewayService:            gatewayService,
-		openAIGatewayService:      openAIGatewayService,
-		geminiCompatService:       geminiCompatService,
-		antigravityGatewayService: antigravityGatewayService,
-		systemLogSink:             systemLogSink,
+		concurrencyService: concurrencyService,
+		systemLogSink:      systemLogSink,
 	}
 	svc.applyRuntimeLogConfigOnStartup(context.Background())
 	return svc

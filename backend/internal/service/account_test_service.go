@@ -62,30 +62,27 @@ func isOpenAIImageModel(model string) bool {
 
 // AccountTestService handles account testing operations
 type AccountTestService struct {
-	accountRepo               AccountRepository
-	geminiTokenProvider       *GeminiTokenProvider
-	antigravityGatewayService *AntigravityGatewayService
-	httpUpstream              HTTPUpstream
-	cfg                       *config.Config
-	tlsFPProfileService       *TLSFingerprintProfileService
+	accountRepo         AccountRepository
+	geminiTokenProvider *GeminiTokenProvider
+	httpUpstream        HTTPUpstream
+	cfg                 *config.Config
+	tlsFPProfileService *TLSFingerprintProfileService
 }
 
 // NewAccountTestService creates a new AccountTestService
 func NewAccountTestService(
 	accountRepo AccountRepository,
 	geminiTokenProvider *GeminiTokenProvider,
-	antigravityGatewayService *AntigravityGatewayService,
 	httpUpstream HTTPUpstream,
 	cfg *config.Config,
 	tlsFPProfileService *TLSFingerprintProfileService,
 ) *AccountTestService {
 	return &AccountTestService{
-		accountRepo:               accountRepo,
-		geminiTokenProvider:       geminiTokenProvider,
-		antigravityGatewayService: antigravityGatewayService,
-		httpUpstream:              httpUpstream,
-		cfg:                       cfg,
-		tlsFPProfileService:       tlsFPProfileService,
+		accountRepo:         accountRepo,
+		geminiTokenProvider: geminiTokenProvider,
+		httpUpstream:        httpUpstream,
+		cfg:                 cfg,
+		tlsFPProfileService: tlsFPProfileService,
 	}
 }
 
@@ -784,44 +781,10 @@ func (s *AccountTestService) routeAntigravityTest(c *gin.Context, account *Accou
 	return s.testAntigravityAccountConnection(c, account, modelID)
 }
 
-// testAntigravityAccountConnection tests an Antigravity account's connection
-// 支持 Claude 和 Gemini 两种协议，使用非流式请求
+// testAntigravityAccountConnection tests an Antigravity account's connection.
+// Proxy layer removed - this test path is no longer available.
 func (s *AccountTestService) testAntigravityAccountConnection(c *gin.Context, account *Account, modelID string) error {
-	ctx := c.Request.Context()
-
-	// 默认模型：Claude 使用 claude-sonnet-4-5，Gemini 使用 gemini-3-pro-preview
-	testModelID := modelID
-	if testModelID == "" {
-		testModelID = "claude-sonnet-4-5"
-	}
-
-	if s.antigravityGatewayService == nil {
-		return s.sendErrorAndEnd(c, "Antigravity gateway service not configured")
-	}
-
-	// Set SSE headers
-	c.Writer.Header().Set("Content-Type", "text/event-stream")
-	c.Writer.Header().Set("Cache-Control", "no-cache")
-	c.Writer.Header().Set("Connection", "keep-alive")
-	c.Writer.Header().Set("X-Accel-Buffering", "no")
-	c.Writer.Flush()
-
-	// Send test_start event
-	s.sendEvent(c, TestEvent{Type: "test_start", Model: testModelID})
-
-	// 调用 AntigravityGatewayService.TestConnection（复用协议转换逻辑）
-	result, err := s.antigravityGatewayService.TestConnection(ctx, account, testModelID)
-	if err != nil {
-		return s.sendErrorAndEnd(c, err.Error())
-	}
-
-	// 发送响应内容
-	if result.Text != "" {
-		s.sendEvent(c, TestEvent{Type: "content", Text: result.Text})
-	}
-
-	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
-	return nil
+	return s.sendErrorAndEnd(c, "Antigravity gateway test not available (proxy layer removed)")
 }
 
 // buildGeminiAPIKeyRequest builds request for Gemini API Key accounts

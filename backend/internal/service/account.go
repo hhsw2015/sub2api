@@ -1325,6 +1325,8 @@ const (
 	WebSearchModeDefault  = "default"  // 跟随渠道配置
 	WebSearchModeEnabled  = "enabled"  // 强制开启
 	WebSearchModeDisabled = "disabled" // 强制关闭
+
+	featureKeyWebSearchEmulation = "web_search_emulation"
 )
 
 // GetWebSearchEmulationMode 返回账号的 WebSearch 模拟模式。
