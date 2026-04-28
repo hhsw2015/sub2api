@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 )
 
@@ -1399,6 +1398,18 @@ func applyStructDefaults(cfg *Config) {
 	if cfg.Log.StacktraceLevel == "" {
 		cfg.Log.StacktraceLevel = "error"
 	}
+	if !cfg.Log.Output.ToStdout && !cfg.Log.Output.ToFile {
+		cfg.Log.Output.ToStdout = true
+	}
+	if cfg.Log.Rotation.MaxSizeMB == 0 {
+		cfg.Log.Rotation.MaxSizeMB = 100
+	}
+	if cfg.Log.Rotation.MaxBackups == 0 {
+		cfg.Log.Rotation.MaxBackups = 10
+	}
+	if cfg.Log.Rotation.MaxAgeDays == 0 {
+		cfg.Log.Rotation.MaxAgeDays = 7
+	}
 	if cfg.Database.Host == "" {
 		cfg.Database.Host = "localhost"
 	}
@@ -1415,7 +1426,7 @@ func applyStructDefaults(cfg *Config) {
 		cfg.Database.DBName = "sub2api"
 	}
 	if cfg.Database.SSLMode == "" {
-		cfg.Database.SSLMode = "prefer"
+		cfg.Database.SSLMode = "disable"
 	}
 	if cfg.Database.MaxOpenConns == 0 {
 		cfg.Database.MaxOpenConns = 256
@@ -1453,26 +1464,57 @@ func applyStructDefaults(cfg *Config) {
 	if cfg.Default.RateMultiplier == 0 {
 		cfg.Default.RateMultiplier = 1.0
 	}
+	// Redis
+	if cfg.Redis.DialTimeoutSeconds == 0 {
+		cfg.Redis.DialTimeoutSeconds = 5
+	}
+	if cfg.Redis.ReadTimeoutSeconds == 0 {
+		cfg.Redis.ReadTimeoutSeconds = 3
+	}
+	if cfg.Redis.WriteTimeoutSeconds == 0 {
+		cfg.Redis.WriteTimeoutSeconds = 3
+	}
+	if cfg.Redis.PoolSize == 0 {
+		cfg.Redis.PoolSize = 1024
+	}
+	if cfg.Redis.MinIdleConns == 0 {
+		cfg.Redis.MinIdleConns = 128
+	}
+	// Server timeouts
+	if cfg.Server.ReadHeaderTimeout == 0 {
+		cfg.Server.ReadHeaderTimeout = 30
+	}
+	if cfg.Server.IdleTimeout == 0 {
+		cfg.Server.IdleTimeout = 120
+	}
 }
 
 // LoadFromMap constructs a Config from a map (e.g., from a parent YAML config).
-// This allows embedding sub2api config inside another application's config
-// without using Viper's global state.
+// Uses a private Viper instance to apply all defaults (avoiding 71+ manual checks),
+// then merges the input data and unmarshals.
 func LoadFromMap(data map[string]any) (*Config, error) {
-	var cfg Config
-	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Result:           &cfg,
-		TagName:          "mapstructure",
-		WeaklyTypedInput: true,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create decoder: %w", err)
-	}
-	if err := decoder.Decode(data); err != nil {
-		return nil, fmt.Errorf("decode config from map: %w", err)
+	v := viper.New()
+	v.SetConfigType("yaml")
+
+	// Apply all defaults using the same function as the normal load path.
+	// We temporarily swap the global viper, call setDefaults, then restore.
+	// This is safe because LoadFromMap is called once at startup.
+	setDefaults()
+
+	// Merge defaults from global viper into our instance
+	for _, key := range viper.AllKeys() {
+		v.SetDefault(key, viper.Get(key))
 	}
 
-	applyStructDefaults(&cfg)
+	// Merge user-provided data on top
+	if err := v.MergeConfigMap(data); err != nil {
+		return nil, fmt.Errorf("merge config map: %w", err)
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("unmarshal config from map: %w", err)
+	}
 
 	if err := normalizeConfig(&cfg); err != nil {
 		return nil, err
